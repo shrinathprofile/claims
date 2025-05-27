@@ -3,4 +3,3 @@ langchain-community
 pypdf
 chromadb
 openai
-protobuf
