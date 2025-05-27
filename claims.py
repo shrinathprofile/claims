@@ -11,7 +11,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 HANDBOOK_PATH = "user_uploaded_handbook.pdf"
 CHROMA_DB_PATH = "chroma_db"
 OPENROUTER_MODEL = "microsoft/phi-4-reasoning:free"
-EMBEDDING_MODEL = "nomic-embed-text"  # Fallback: "text-embedding-ada-002" if nomic-embed-text is unavailable
+EMBEDDING_MODEL = "text-embedding-ada-002"
 
 # --- Custom Embedding Function for nomic-embed-text via OpenRouter ---
 class NomicEmbeddings:
