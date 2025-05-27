@@ -3,62 +3,23 @@ import os
 import tempfile
 from openai import OpenAI
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.messages import HumanMessage, AIMessage
-import numpy as np
 
 # --- Configuration ---
 HANDBOOK_PATH = "user_uploaded_handbook.pdf"
 OPENROUTER_MODEL = "microsoft/phi-4-reasoning:free"
-EMBEDDING_MODEL = "text-embedding-ada-002"
 
-# --- Custom Embedding Function for nomic-embed-text via OpenRouter ---
-class NomicEmbeddings:
-    def __init__(self, api_key):
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key
-        )
-
-    def embed_documents(self, texts):
-        try:
-            embeddings = []
-            for text in texts:
-                response = self.client.embeddings.create(
-                    model=EMBEDDING_MODEL,
-                    input=text
-                )
-                embeddings.append(response.data[0].embedding)
-            return embeddings
-        except Exception as e:
-            st.error(f"Error generating embeddings: {e}")
-            st.warning(f"Please ensure the embedding model `{EMBEDDING_MODEL}` is available via OpenRouter.")
-            st.stop()
-
-    def embed_query(self, text):
-        try:
-            response = self.client.embeddings.create(
-                model=EMBEDDING_MODEL,
-                input=text
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            st.error(f"Error generating query embedding: {e}")
-            st.stop()
-
-# --- Function to Load and Embed Handbook into FAISS ---
+# --- Function to Load and Setup BM25 Retriever ---
 @st.cache_resource
-def setup_vector_store(handbook_file, api_key):
-    """Sets up the FAISS vector store with the uploaded insurance handbook."""
+def setup_retriever(handbook_file):
+    """Sets up the BM25 retriever with the uploaded insurance handbook."""
     if handbook_file is None:
         st.error("Please upload a claims handbook PDF to proceed.")
         st.stop()
-    if not api_key:
-        st.error("Please enter a valid OpenRouter API key.")
-        st.stop()
 
-    st.info("Loading and embedding handbook into FAISS...")
+    st.info("Loading and processing handbook for keyword search...")
     try:
         # Save uploaded handbook to a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -71,25 +32,23 @@ def setup_vector_store(handbook_file, api_key):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = text_splitter.split_documents(docs)
 
-        # Embed documents using OpenRouter
-        embeddings = NomicEmbeddings(api_key)
-        vectorstore = FAISS.from_documents(splits, embeddings)
+        # Create BM25 retriever
+        retriever = BM25Retriever.from_documents(splits, k=3)
 
-        st.success("Handbook loaded and embedded successfully into FAISS!")
+        st.success("Handbook loaded and processed successfully for keyword search!")
 
         # Clean up temporary file
         if os.path.exists(tmp_file_path):
             os.unlink(tmp_file_path)
         
-        return vectorstore
+        return retriever
     except Exception as e:
-        st.error(f"Error setting up vector store: {e}")
-        st.warning("Please ensure the OpenRouter API key is valid and the embedding model is accessible.")
+        st.error(f"Error setting up retriever: {e}")
         st.stop()
 
 # --- Function to Get LLM Response for Claims ---
-def get_claim_decision(vectorstore, claim_text, chat_history, api_key):
-    """Uses the LLM and RAG to get a claim decision based on the handbook and claim details."""
+def get_claim_decision(retriever, claim_text, chat_history, api_key):
+    """Uses the LLM and keyword search to get a claim decision based on the handbook and claim details."""
     if not api_key:
         st.error("Please enter a valid OpenRouter API key.")
         st.stop()
@@ -117,9 +76,8 @@ def get_claim_decision(vectorstore, claim_text, chat_history, api_key):
         st.error(f"Error generating search query: {e}")
         st.stop()
 
-    # 2. Retrieve relevant handbook sections
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    relevant_docs = retriever.get_relevant_documents(search_query)
+    # 2. Retrieve relevant handbook sections using BM25
+    relevant_docs = retriever.invoke(search_query)
     context = "\n\n".join([doc.page_content for doc in relevant_docs])
 
     # 3. Generate claim decision
@@ -147,15 +105,15 @@ def get_claim_decision(vectorstore, claim_text, chat_history, api_key):
 # --- Streamlit Application ---
 st.set_page_config(page_title="XYZ Insurance Claims Adjuster", layout="wide")
 st.title("👨‍⚖️ XYZ Insurance Claims Adjuster (AI Powered)")
-st.caption("Automated Insurance Claim Processing using OpenRouter and FAISS")
+st.caption("Automated Insurance Claim Processing using OpenRouter and Keyword Search")
 
 # Initialize session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
         AIMessage(content="Hello! Please enter your OpenRouter API key, upload your claims handbook PDF, and a medical bill PDF to determine coverage.")
     ]
-if "vectorstore" not in st.session_state:
-    st.session_state.vectorstore = None
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
 if "handbook_uploaded" not in st.session_state:
     st.session_state.handbook_uploaded = False
 if "api_key" not in st.session_state:
@@ -172,8 +130,8 @@ with st.sidebar:
     if handbook_file and st.session_state.api_key:
         st.session_state.handbook_uploaded = True
         st.success(f"Handbook uploaded: {handbook_file.name}")
-        # Initialize vector store with uploaded handbook
-        st.session_state.vectorstore = setup_vector_store(handbook_file, st.session_state.api_key)
+        # Initialize BM25 retriever with uploaded handbook
+        st.session_state.retriever = setup_retriever(handbook_file)
 
     if st.button("View Handbook Text", disabled=not st.session_state.handbook_uploaded):
         try:
@@ -217,7 +175,7 @@ else:
 
             with st.spinner("Analyzing claim... Please wait."):
                 # Get claim decision
-                response_content = get_claim_decision(st.session_state.vectorstore, bill_content, st.session_state.chat_history, st.session_state.api_key)
+                response_content = get_claim_decision(st.session_state.retriever, bill_content, st.session_state.chat_history, st.session_state.api_key)
 
                 # Update chat history
                 st.session_state.chat_history.append(HumanMessage(content=f"User uploaded a bill. Extracted content: {bill_content[:200]}..."))
@@ -229,7 +187,7 @@ else:
 
         except Exception as e:
             st.error(f"An error occurred during processing: {e}")
-            st.warning("Please ensure the OpenRouter API key is valid and the models are accessible.")
+            st.warning("Please ensure the OpenRouter API key is valid and the model is accessible.")
         finally:
             if os.path.exists(tmp_file_path):
                 os.unlink(tmp_file_path)
