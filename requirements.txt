@@ -1,5 +1,5 @@
 streamlit
 langchain-community
 pypdf
-chromadb
+faiss-cpu
 openai
