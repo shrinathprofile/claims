@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 # --- Configuration ---
 HANDBOOK_PATH = "user_uploaded_handbook.pdf"
-OPENROUTER_MODEL = "microsoft/phi-4-reasoning:free"
+OPENROUTER_MODEL = "google/gemma-3-27b-it:free"
 
 # --- Function to Load and Setup BM25 Retriever ---
 @st.cache_resource
